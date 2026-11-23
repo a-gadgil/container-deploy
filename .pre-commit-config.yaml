@@ -1,0 +1,102 @@
+repos:
+  # 1. Universal File Hygiene & Safety Checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: ['--unsafe']
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=1024']
+        exclude: ^(go-service/bin/|cpp-service/build/|\.pre-commit-trivy-cache/)
+      - id: detect-private-key
+
+  # 2. Dockerfile Linting (All Services)
+  - repo: local
+    hooks:
+      - id: hadolint
+        name: Lint Dockerfiles (hadolint)
+        entry: hadolint
+        language: system
+        files: '(^|/)Dockerfile(\.[^/]+)?$'
+
+  # 3. Go Formatting & Static Analysis (go-service/)
+  - repo: local
+    hooks:
+      - id: go-fmt
+        name: Format Go code (gofmt)
+        entry: gofmt -w
+        language: system
+        files: '^go-service/.*\.go$'
+      - id: go-vet
+        name: Run Go static analysis (go vet)
+        entry: bash -c 'cd go-service && go vet ./...'
+        language: system
+        files: '^go-service/.*\.go$'
+        pass_filenames: false
+
+  # 4. Python Linting & Formatting (python-service/)
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: Lint Python code (ruff)
+        entry: ruff check --fix
+        language: system
+        files: '^python-service/.*\.py$'
+      - id: ruff-format
+        name: Format Python code (ruff)
+        entry: ruff format
+        language: system
+        files: '^python-service/.*\.py$'
+
+  # 5. Java Compilation Check (java-service/)
+  - repo: local
+    hooks:
+      - id: java-compile-check
+        name: Verify Java compilation (mvn test-compile)
+        entry: bash -c 'cd java-service && mvn -o -q test-compile'
+        language: system
+        files: '^java-service/(pom\.xml|src/.*\.java)$'
+        pass_filenames: false
+
+  # 6. Node.js Formatting & Syntax Check (node-service/)
+  - repo: local
+    hooks:
+      - id: node-prettier
+        name: Format Node.js code (prettier)
+        entry: prettier --write
+        language: system
+        files: '^node-service/.*\.(js|mjs|cjs|ts|json)$'
+      - id: node-syntax-check
+        name: Check Node.js syntax (node --check)
+        entry: node --check
+        language: system
+        files: '^node-service/.*\.(js|mjs|cjs)$'
+
+  # 7. C++ Formatting (cpp-service/)
+  - repo: local
+    hooks:
+      - id: cpp-clang-format
+        name: Format C++ code (clang-format)
+        entry: clang-format -i
+        language: system
+        files: '^cpp-service/.*\.(cpp|cc|cxx|hpp|h)$'
+
+  # 8. Hardcoded Secret Scanner
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+        name: Detect hardcoded secrets with Gitleaks
+
+  # 9. Local Trivy Filesystem & Container Misconfiguration Scanner
+  - repo: local
+    hooks:
+      - id: trivy-fs
+        name: Scan dependencies and container configs with Trivy
+        entry: trivy fs --scanners vuln,misconfig --offline-scan --ignore-unfixed --skip-version-check --exit-code 1 --severity HIGH,CRITICAL .
+        language: system
+        pass_filenames: false
