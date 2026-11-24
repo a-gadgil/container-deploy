@@ -63,14 +63,24 @@ stages:
           matrix: $[ stageDependencies.DetectChanges.CheckPaths.outputs['setMatrix.serviceMatrix'] ]
         steps:
           - task: Docker@2
-            displayName: 'Build and Push $(serviceDir) to Docker Hub'
+            displayName: 'Build $(serviceDir) image'
             inputs:
-              command: 'buildAndPush'
+              command: 'build'
               containerRegistry: '$(registryServiceConnection)'
               repository: '$(dockerhubUsername)/$(serviceDir)'
               Dockerfile: '$(serviceDir)/Dockerfile'
               buildContext: '$(serviceDir)'
               arguments: '--network=host'
+              tags: |
+                $(imageTag)
+                latest
+
+          - task: Docker@2
+            displayName: 'Push $(serviceDir) to Docker Hub'
+            inputs:
+              command: 'push'
+              containerRegistry: '$(registryServiceConnection)'
+              repository: '$(dockerhubUsername)/$(serviceDir)'
               tags: |
                 $(imageTag)
                 latest
