@@ -6,10 +6,9 @@ pool:
 
 variables:
   imageTag: '1.0.$(Build.BuildId)'
-  # Replace with your Docker Registry Service Connection name (e.g., ghcr-connection or dockerhub-connection)
   registryServiceConnection: 'container-registry-conn'
-  # Replace with your lowercase registry namespace (e.g., ghcr.io/adityagadgil or docker.io/adityagadgil)
-  registryNamespace: 'ghcr.io/adityagadgil'
+  # Replace with your lowercase Docker Hub username (Docker ID)
+  dockerhubUsername: 'baremetal24'
 
 stages:
   # Stage 1: Detect modified runtimes in PR relative to main
@@ -19,7 +18,7 @@ stages:
       - job: CheckPaths
         steps:
           - checkout: self
-            fetchDepth: 0
+            fetchDepth: '0'
           - bash: |
               git fetch origin main
               CHANGED_FILES=$(git diff --name-only origin/main...HEAD)
@@ -52,9 +51,9 @@ stages:
               fi
             name: setMatrix
 
-  # Stage 2: Build & Push modified service images in parallel
+  # Stage 2: Build & Push modified service images in parallel to Docker Hub
   - stage: BuildAndPush
-    displayName: 'Build & Push Container Images'
+    displayName: 'Build & Push to Docker Hub'
     dependsOn: DetectChanges
     condition: eq(dependencies.DetectChanges.outputs['CheckPaths.setMatrix.hasChanges'], 'true')
     jobs:
@@ -64,13 +63,24 @@ stages:
           matrix: $[ stageDependencies.DetectChanges.CheckPaths.outputs['setMatrix.serviceMatrix'] ]
         steps:
           - task: Docker@2
-            displayName: 'Build and Push $(serviceDir)'
+            displayName: 'Build $(serviceDir) image'
             inputs:
-              command: 'buildAndPush'
+              command: 'build'
               containerRegistry: '$(registryServiceConnection)'
-              repository: '$(registryNamespace)/$(serviceDir)'
+              repository: '$(dockerhubUsername)/$(serviceDir)'
               Dockerfile: '$(serviceDir)/Dockerfile'
               buildContext: '$(serviceDir)'
+              arguments: '--network=host'
+              tags: |
+                $(imageTag)
+                latest
+
+          - task: Docker@2
+            displayName: 'Push $(serviceDir) to Docker Hub'
+            inputs:
+              command: 'push'
+              containerRegistry: '$(registryServiceConnection)'
+              repository: '$(dockerhubUsername)/$(serviceDir)'
               tags: |
                 $(imageTag)
                 latest
