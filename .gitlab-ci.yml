@@ -1,0 +1,69 @@
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+stages:
+  - build-and-push
+
+variables:
+  IMAGE_TAG: "1.0.${CI_PIPELINE_IID}"
+
+.kaniko_template:
+  stage: build-and-push
+  image:
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
+  before_script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(printf "%s:%s" "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
+  script:
+    - |
+      if [ ! -f "${SERVICE_DIR}/Dockerfile" ]; then
+        echo "Skipping ${SERVICE_DIR}: Dockerfile not present yet."
+        exit 0
+      fi
+      /kaniko/executor \
+        --context "${CI_PROJECT_DIR}/${SERVICE_DIR}" \
+        --dockerfile "${CI_PROJECT_DIR}/${SERVICE_DIR}/Dockerfile" \
+        --destination "${CI_REGISTRY_IMAGE}/${SERVICE_DIR}:${IMAGE_TAG}" \
+        --destination "${CI_REGISTRY_IMAGE}/${SERVICE_DIR}:latest"
+
+build-cpp:
+  extends: .kaniko_template
+  variables:
+    SERVICE_DIR: "cpp-service"
+  rules:
+    - changes:
+        - cpp-service/**/*
+
+build-python:
+  extends: .kaniko_template
+  variables:
+    SERVICE_DIR: "python-service"
+  rules:
+    - changes:
+        - python-service/**/*
+
+build-java:
+  extends: .kaniko_template
+  variables:
+    SERVICE_DIR: "java-service"
+  rules:
+    - changes:
+        - java-service/**/*
+
+build-go:
+  extends: .kaniko_template
+  variables:
+    SERVICE_DIR: "go-service"
+  rules:
+    - changes:
+        - go-service/**/*
+
+build-rust:
+  extends: .kaniko_template
+  variables:
+    SERVICE_DIR: "rust-service"
+  rules:
+    - changes:
+        - rust-service/**/*

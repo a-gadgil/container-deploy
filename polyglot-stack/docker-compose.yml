@@ -1,0 +1,131 @@
+services:
+  postgres:
+    image: postgres:16-bookworm
+    container_name: polyglot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-polyglot_db}
+      POSTGRES_USER: ${POSTGRES_USER:-polyglot_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-polyglot_dev_pass}
+    volumes:
+      - polyglot_pgdata:/var/lib/postgresql/data
+      - ./db/001_init_schema.sql:/docker-entrypoint-initdb.d/001_init_schema.sql:ro
+      - ./db/002_seed_data.sql:/docker-entrypoint-initdb.d/002_seed_data.sql:ro
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-polyglot_app} -d ${POSTGRES_DB:-polyglot_db}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  redis:
+    image: redis:7-bookworm
+    container_name: polyglot-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - polyglot_redisdata:/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  python-api:
+    build:
+      context: ./python-api
+      dockerfile: Dockerfile
+    image: polyglot-python-api:1.0.0
+    container_name: polyglot-python-api
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8091
+      APP_ENV: container
+      DATABASE_URL: postgresql://${POSTGRES_USER:-polyglot_app}:${POSTGRES_PASSWORD:-polyglot_dev_pass}@postgres:5432/${POSTGRES_DB:-polyglot_db}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/readyz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  go-api:
+    build:
+      context: ./go-api
+      dockerfile: Dockerfile
+    image: polyglot-go-api:1.0.0
+    container_name: polyglot-go-api
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8090
+      APP_ENV: container
+      DATABASE_URL: postgres://${POSTGRES_USER:-polyglot_app}:${POSTGRES_PASSWORD:-polyglot_dev_pass}@postgres:5432/${POSTGRES_DB:-polyglot_db}?sslmode=disable
+      REDIS_ADDR: redis:6379
+      PYTHON_API_URL: http://python-api:8091
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      python-api:
+        condition: service_healthy
+    networks:
+      - frontend
+      - backend
+
+  nginx:
+    image: nginx:1.27-bookworm
+    container_name: polyglot-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/polyglot-stack.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - go-api
+      - python-api
+    networks:
+      - frontend
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  polyglot_pgdata:
+  polyglot_redisdata:
+
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+    internal: true
