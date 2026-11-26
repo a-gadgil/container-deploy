@@ -1,2 +1,4 @@
 venv/
 cpp-service/build/
+**/target/
+.env
