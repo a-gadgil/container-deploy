@@ -1,0 +1,148 @@
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+    internal: true
+
+volumes:
+  mariadb_rm_data:
+  redis_rm_data:
+
+services:
+  mariadb:
+    image: mariadb:11.4
+    container_name: polyglot-rm-mariadb
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${MARIADB_DATABASE}
+      MARIADB_USER: ${MARIADB_USER}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+    volumes:
+      - mariadb_rm_data:/var/lib/mysql
+      - ./db/001_init_schema.sql:/docker-entrypoint-initdb.d/001_init_schema.sql:ro
+      - ./db/002_seed_data.sql:/docker-entrypoint-initdb.d/002_seed_data.sql:ro
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh --connect --innodb_initialized"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 15s
+
+  redis:
+    image: redis:7-bookworm
+    container_name: polyglot-rm-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_rm_data:/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  rust-api:
+    build:
+      context: ./rust-api
+    image: polyglot-rm-rust-api:1.0.0
+    container_name: polyglot-rm-rust-api
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8091
+      APP_ENV: container
+      MARIADB_URL: mysql://${MARIADB_USER}:${MARIADB_PASSWORD}@mariadb:3306/${MARIADB_DATABASE}?ssl-mode=DISABLED
+      REDIS_URL: redis://redis:6379/
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      test: ["CMD", "/polyglot-rust-api", "--healthcheck"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  go-api:
+    build:
+      context: ./go-api
+    image: polyglot-rm-go-api:1.0.0
+    container_name: polyglot-rm-go-api
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8090
+      APP_ENV: container
+      MARIADB_DSN: ${MARIADB_USER}:${MARIADB_PASSWORD}@tcp(mariadb:3306)/${MARIADB_DATABASE}?parseTime=true&loc=UTC&timeout=2s
+      REDIS_ADDR: redis:6379
+      RUST_API_URL: http://rust-api:8091
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rust-api:
+        condition: service_healthy
+    networks:
+      - frontend
+      - backend
+    healthcheck:
+      test: ["CMD", "/go-api", "-healthcheck"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: polyglot-rm-nginx
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=32M
+      - /var/run:size=8M
+      - /tmp:size=8M
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      go-api:
+        condition: service_healthy
+      rust-api:
+        condition: service_healthy
+    networks:
+      - frontend
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
